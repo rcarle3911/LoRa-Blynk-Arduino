@@ -5,7 +5,7 @@
 #include <RH_RF95.h>
 #define TXPOWER 5 // TX power in dbm
 
-#define AUGER_ENABLE_BUTTON_PIN 5 // 
+#define SYSTEM_ENABLE_BUTTON_PIN 5
 #define RFM95_CS 4
 #define RFM95_RST 2
 #define RFM95_INT 3
@@ -13,19 +13,20 @@
 #include <BlynkSimpleEthernet.h>
 #define W5100_CS  10
 #define SDCARD_CS 4
+
 #define SEND_STATUS_LED A0
 #define UNIT_ONLINE_LED_PIN 9
-#define SYSTEM_ENABLED_LED_PIN 6 
-#define AUGER_STATUS_LED_PIN 8 
+#define SYSTEM_STATUS_LED_PIN 6
+#define AUGER_STATUS_LED_PIN 8
 
 #define BUTTON_PRESS_TIME 2000
 #define BLINK_TIME 1000
 #define ONLINE_TIMEOUT 10000
 
 // Blynk virtual pins
-#define AUGER_ENABLE_BUTTON_VPIN V0
+#define SYSTEM_ENABLED_BUTTON_VPIN V0
 #define UNIT_ONLINE_LED_VPIN V1
-#define SYSTEM_ENABLED_LED_VPIN V2
+#define SYSTEM_STATUS_LED_VPIN V2
 #define AUGER_STATUS_LED_VPIN V3
 
 char auth[] = "YOUR_BLYNK_AUTH_KEY_HERE"; // REPLACE WITH YOUR AUTH KEY FROM BLYNK
@@ -37,17 +38,17 @@ char auth[] = "YOUR_BLYNK_AUTH_KEY_HERE"; // REPLACE WITH YOUR AUTH KEY FROM BLY
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
 WidgetLED unitOnlineWLed(UNIT_ONLINE_LED_VPIN);
-WidgetLED systemEnabledWLed(SYSTEM_ENABLED_LED_VPIN);
+WidgetLED systemEnabledWLed(SYSTEM_STATUS_LED_VPIN);
 WidgetLED augerStatusWLed(AUGER_STATUS_LED_VPIN);
 
 uint8_t mid = 0;
-bool augerEnabled = false;
-bool augerButtonState = HIGH; // Initial state is off
+bool augerStatus = false;
+bool sysEnableButtonState = HIGH; // Initial state is off
 bool systemEnabled = false;
 bool unitOnline = false;
 bool blinkUnitOnlineToggle = false;
 
-unsigned long augerButtonPressStart = 0;
+unsigned long sysEnableButtonPressStart = 0;
 unsigned long lastMessage = 0;
 unsigned long lastBlink = 0;
 
@@ -55,23 +56,23 @@ uint8_t rx_buf[3];
 uint8_t rx_len = sizeof(rx_buf);
 
 BLYNK_CONNECTED() {
-  Blynk.syncVirtual(AUGER_ENABLE_BUTTON_VPIN);
+  Blynk.syncVirtual(SYSTEM_ENABLED_BUTTON_VPIN);
 }
 
 void sendRadioPacket();
 
-BLYNK_WRITE(AUGER_ENABLE_BUTTON_VPIN) {
+BLYNK_WRITE(SYSTEM_ENABLED_BUTTON_VPIN) {
   int buttonState = param.asInt();
-  augerEnabled = buttonState == 1 ? true : false;
+  systemEnabled = buttonState == 1 ? true : false;
   sendRadioPacket();
 }
 
 void setup() 
 {
   pinMode(SEND_STATUS_LED, OUTPUT);     
-  pinMode(AUGER_ENABLE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(SYSTEM_ENABLE_BUTTON_PIN, INPUT_PULLUP);
   pinMode(UNIT_ONLINE_LED_PIN, OUTPUT);
-  pinMode(SYSTEM_ENABLED_LED_PIN, OUTPUT);
+  pinMode(SYSTEM_STATUS_LED_PIN, OUTPUT);
   pinMode(AUGER_STATUS_LED_PIN, OUTPUT); 
   Serial.begin(115200);
   delay(100);
@@ -85,15 +86,15 @@ void setup()
 void loop()
 {
   //Check for button presses
-  if (buttonPressed(AUGER_ENABLE_BUTTON_PIN, &augerButtonState)) {
+  if (buttonPressed(SYSTEM_ENABLE_BUTTON_PIN, &sysEnableButtonState)) {
     Serial.println(F("Button pushed... starting timer"));
-    augerButtonPressStart = millis();
-  } else if (augerButtonState == LOW) {
-    if (augerButtonPressStart + BUTTON_PRESS_TIME < millis()) {
-      augerButtonPressStart = millis();
+    sysEnableButtonPressStart = millis();
+  } else if (sysEnableButtonState == LOW) {
+    if (sysEnableButtonPressStart + BUTTON_PRESS_TIME < millis()) {
+      sysEnableButtonPressStart = millis();
       Serial.println(F("Button timer met... sending packet"));
-      augerEnabled = !augerEnabled;
-      Blynk.virtualWrite(AUGER_ENABLE_BUTTON_VPIN, augerEnabled);
+      systemEnabled = !systemEnabled;
+      Blynk.virtualWrite(SYSTEM_ENABLED_BUTTON_VPIN, systemEnabled);
       sendRadioPacket();
     }
   }
@@ -110,7 +111,7 @@ void loop()
       unitOnline = false;
       unitOnlineWLed.off();
     }
-  } else {    
+  } else {
     unitOnline = true;
     blinkUnitOnline();
   }
@@ -133,9 +134,9 @@ bool processMessage(char * data, uint8_t mid) {
   Serial.print(F("Received message: "));Serial.println(data);
 
   uint8_t _mid = data[0];
-  uint8_t _augEn = data[1];
-  uint8_t _sysEn = data[2];
-
+  uint8_t _sysStatus = data[1];
+  uint8_t _augStatus = data[2];
+  
   lastMessage = millis();
 
   if (_mid == mid) {
@@ -144,15 +145,17 @@ bool processMessage(char * data, uint8_t mid) {
     Serial.println(F("Mids mismatch"));
   }
 
-  if ( (_sysEn == 1) != systemEnabled) {
+  if ( (_sysStatus == 1) != systemEnabled) {
     systemEnabled = !systemEnabled;
     toggleWLed(&systemEnabledWLed, systemEnabled);
-    digitalWrite(SYSTEM_ENABLED_LED_PIN, systemEnabled);
+    digitalWrite(SYSTEM_STATUS_LED_PIN, systemEnabled);
+    Blynk.virtualWrite(SYSTEM_ENABLED_BUTTON_VPIN, systemEnabled);
   }
 
-  if ( (_augEn == 1) != augerEnabled) {
-    augerEnabled = !augerEnabled;
-    Blynk.virtualWrite(AUGER_ENABLE_BUTTON_VPIN, augerEnabled);    
+  if ( (_augStatus == 1) != augerStatus) {
+    augerStatus = !augerStatus;
+    toggleWLed(&augerStatusWLed, augerStatus);
+    digitalWrite(AUGER_STATUS_LED_PIN, augerStatus);
   }
   
   return rt;
@@ -167,7 +170,7 @@ void sendRadioPacket() {
   while (!sent) {
 
     rx_buf[0] = ++mid;
-    rx_buf[1] = augerEnabled;
+    rx_buf[1] = systemEnabled;
     
     if (attempts++ > 10) {      
       break;

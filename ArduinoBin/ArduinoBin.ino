@@ -20,20 +20,20 @@ uint8_t buf[3];
 uint8_t len = sizeof(buf);
 
 // Button/LED pins
-#define AUGER_ENABLE_BUTTON_PIN 5
-#define SYSTEM_ENABLE_STATUS_PIN 6
-#define AUGER_STATUS_PIN 8
-#define AUGER_ENABLE_CONTACT_PIN 7
+#define SYSTEM_ENABLE_BUTTON_PIN 5
+#define SYSTEM_STATUS_PIN 6
+#define AUGER_STATUS_PIN 7
 
 uint8_t lastMid = 0;
-bool augerEnabled = false;
+bool augerStatus = false;
 bool systemEnabled = false;
+bool systemStatus = false;
 
 void setup() 
 { 
-  pinMode(AUGER_ENABLE_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(SYSTEM_ENABLE_STATUS_PIN, INPUT_PULLUP);
-  pinMode(AUGER_ENABLE_CONTACT_PIN, OUTPUT);
+  pinMode(AUGER_STATUS_PIN, INPUT_PULLUP);
+  pinMode(SYSTEM_STATUS_PIN, INPUT_PULLUP);
+  pinMode(SYSTEM_ENABLE_BUTTON_PIN, OUTPUT);
   
   Serial.begin(115200);
   delay(100);
@@ -57,11 +57,12 @@ void loop()
   } else {
     Serial.println(F("Nothing to process"));
   }
+  
+  digitalWrite(SYSTEM_ENABLE_BUTTON_PIN, systemEnabled);
+  systemStatus = !digitalRead(SYSTEM_STATUS_PIN);
+  augerStatus = !digitalRead(AUGER_STATUS_PIN);
 
   sendRadioPacket();
-  
-  digitalWrite(AUGER_ENABLE_CONTACT_PIN, augerEnabled);
-  systemEnabled = digitalRead(SYSTEM_ENABLE_STATUS_PIN);
 }
 
 void processMessage(char * data) {
@@ -69,18 +70,18 @@ void processMessage(char * data) {
   Serial.print(F("Received message: "));Serial.println(data);
 
   lastMid = data[0];
-  if (!systemEnabled) {
-    augerEnabled = data[1];
+  if (!augerStatus) { // Only allow change if auger is OFF
+    systemEnabled = data[1];
   } else {
-    Serial.println(F("System enabled. Not accepting input"));
+    Serial.println(F("Auger ON. Not accepting input"));
   }
 }
 
 void sendRadioPacket() {
   
   buf[0] = lastMid;
-  buf[1] = augerEnabled;
-  buf[2] = systemEnabled;
+  buf[1] = systemStatus;
+  buf[2] = augerStatus;
  
   rf95.send((uint8_t *)buf, sizeof(buf));
   rf95.waitPacketSent(500);
@@ -119,17 +120,4 @@ void radio_init() {
   // If you are using RFM95/96/97/98 modules which uses the PA_BOOST transmitter pin, then 
   // you can set transmitter powers from 5 to 23 dBm:
   rf95.setTxPower(TXPOWER, false);
-}
-
-// Returns true if button was pressed. False otherwise.
-bool buttonPressed (int pin, bool *state) {
-  if( digitalRead(pin) == LOW ) {
-    if ( *state == HIGH ) {
-      *state = LOW;
-      return true;
-    }
-  } else {
-    *state = HIGH;
-  }
-  return false;  
 }
