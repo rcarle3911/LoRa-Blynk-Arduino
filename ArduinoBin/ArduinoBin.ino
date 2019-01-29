@@ -4,7 +4,6 @@
 
 #include <SPI.h>
 #include <RH_RF95.h>
-#include <ArduinoJson.h>
 #define TXPOWER 5 // TX power in dbm
 
 #define RFM95_CS 4
@@ -17,13 +16,16 @@
 // Singleton instance of the radio driver
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 
+uint8_t buf[3];
+uint8_t len = sizeof(buf);
+
 // Button/LED pins
 #define AUGER_ENABLE_BUTTON_PIN 5
 #define SYSTEM_ENABLE_STATUS_PIN 6
 #define AUGER_STATUS_PIN 8
 #define AUGER_ENABLE_CONTACT_PIN 7
 
-unsigned long lastMid = 0;
+uint8_t lastMid = 0;
 bool augerEnabled = false;
 bool systemEnabled = false;
 
@@ -43,11 +45,7 @@ void setup()
 
 void loop()
 {
-  
-  uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
-  uint8_t len = sizeof(buf);
-
-  Serial.println("Waiting for message...");
+  Serial.println(F("Waiting for message..."));
   if (rf95.waitAvailableTimeout(2000)) {
     
     if (rf95.recv(buf, &len)) {
@@ -69,35 +67,20 @@ void loop()
 void processMessage(char * data) {
 
   Serial.print(F("Received message: "));Serial.println(data);
-  
-  StaticJsonBuffer<RH_RF95_MAX_MESSAGE_LEN> jsonBuffer;
-  JsonObject& input = jsonBuffer.parseObject(data);
 
-  if (input.success()) {
-    lastMid = input[F("mid")].as<unsigned long>();
-    if (!systemEnabled) {
-      augerEnabled = input[F("augEn")].as<bool>();
-    } else {
-      Serial.println(F("System enabled. Not accepting input"));
-    }
+  lastMid = data[0];
+  if (!systemEnabled) {
+    augerEnabled = data[1];
+  } else {
+    Serial.println(F("System enabled. Not accepting input"));
   }
-  jsonBuffer.clear();
-  
 }
 
 void sendRadioPacket() {
   
-  StaticJsonBuffer<RH_RF95_MAX_MESSAGE_LEN> jsonBuffer;
-  JsonObject& root = jsonBuffer.createObject();
-
-  root[F("mid")] = lastMid;
-  root[F("augEn")] = augerEnabled;
-  root[F("sysEn")] = systemEnabled;
-  
-  char buf[RH_RF95_MAX_MESSAGE_LEN];
-  root.printTo(buf, sizeof(buf));
-  
-  jsonBuffer.clear();  
+  buf[0] = lastMid;
+  buf[1] = augerEnabled;
+  buf[2] = systemEnabled;
  
   rf95.send((uint8_t *)buf, sizeof(buf));
   rf95.waitPacketSent(500);

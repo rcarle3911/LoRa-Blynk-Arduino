@@ -3,7 +3,6 @@
  */
 #include <SPI.h>
 #include <RH_RF95.h>
-#include <ArduinoJson.h>
 #define TXPOWER 5 // TX power in dbm
 
 #define AUGER_ENABLE_BUTTON_PIN 5 // 
@@ -41,7 +40,7 @@ WidgetLED unitOnlineWLed(UNIT_ONLINE_LED_VPIN);
 WidgetLED systemEnabledWLed(SYSTEM_ENABLED_LED_VPIN);
 WidgetLED augerStatusWLed(AUGER_STATUS_LED_VPIN);
 
-unsigned long mid = 0;
+uint8_t mid = 0;
 bool augerEnabled = false;
 bool augerButtonState = HIGH; // Initial state is off
 bool systemEnabled = false;
@@ -52,9 +51,8 @@ unsigned long augerButtonPressStart = 0;
 unsigned long lastMessage = 0;
 unsigned long lastBlink = 0;
 
-uint8_t rx_buf[RH_RF95_MAX_MESSAGE_LEN];
+uint8_t rx_buf[3];
 uint8_t rx_len = sizeof(rx_buf);
-StaticJsonBuffer<RH_RF95_MAX_MESSAGE_LEN> jsonBuffer;
 
 BLYNK_CONNECTED() {
   Blynk.syncVirtual(AUGER_ENABLE_BUTTON_VPIN);
@@ -129,61 +127,48 @@ void blinkUnitOnline() {
   }
 }
 
-bool processMessage(char * data, unsigned long mid) {
+bool processMessage(char * data, uint8_t mid) {
   
   bool rt = false;
   Serial.print(F("Received message: "));Serial.println(data);
-  
-  JsonObject& input = jsonBuffer.parseObject(data);
-  JsonVariant _mid = input[F("mid")];
-  JsonVariant _sysEn = input[F("sysEn")];
-  JsonVariant _augEn = input[F("augEn")];
 
-  if ( input.success() && _mid.success() && _sysEn.success() && _augEn.success() ) {
+  uint8_t _mid = data[0];
+  uint8_t _augEn = data[1];
+  uint8_t _sysEn = data[2];
 
-    lastMessage = millis();
-  
-    if (_mid.as<unsigned long>() == mid) {
-      rt = true;
-    } else {
-      Serial.println(F("Mids mismatch"));
-    }
-    if (_sysEn.as<bool>() != systemEnabled) {
-      systemEnabled = !systemEnabled;
-      toggleWLed(&systemEnabledWLed, systemEnabled);
-      digitalWrite(SYSTEM_ENABLED_LED_PIN, systemEnabled);
-    }
+  lastMessage = millis();
 
-    if (_augEn.as<bool>() != augerEnabled) {
-      augerEnabled = !augerEnabled;
-      Blynk.virtualWrite(AUGER_ENABLE_BUTTON_VPIN, augerEnabled);
-    }
-
-    if ((augerStatusWLed.getValue() > 0) != augerEnabled) {
-      toggleWLed(&augerStatusWLed, augerEnabled);
-      digitalWrite(AUGER_STATUS_LED_PIN, augerEnabled);
-    }
+  if (_mid == mid) {
+    rt = true;
+  } else {
+    Serial.println(F("Mids mismatch"));
   }
-  jsonBuffer.clear();
+
+  if ( (_sysEn == 1) != systemEnabled) {
+    systemEnabled = !systemEnabled;
+    toggleWLed(&systemEnabledWLed, systemEnabled);
+    digitalWrite(SYSTEM_ENABLED_LED_PIN, systemEnabled);
+  }
+
+  if ( (_augEn == 1) != augerEnabled) {
+    augerEnabled = !augerEnabled;
+    Blynk.virtualWrite(AUGER_ENABLE_BUTTON_VPIN, augerEnabled);    
+  }
+  
   return rt;
 }
 
 void sendRadioPacket() {
 
-  digitalWrite(SEND_STATUS_LED, HIGH);
-  
+  digitalWrite(SEND_STATUS_LED, HIGH);  
   
   bool sent = false;
   uint8_t attempts = 0;
   while (!sent) {
-    JsonObject& root = jsonBuffer.createObject();
 
-    root[F("mid")] = ++mid;
-    root[F("augEn")] = augerEnabled;
+    rx_buf[0] = ++mid;
+    rx_buf[1] = augerEnabled;
     
-    root.printTo((char*)rx_buf, sizeof(rx_buf));
-    
-    jsonBuffer.clear();
     if (attempts++ > 10) {      
       break;
     }
@@ -192,7 +177,7 @@ void sendRadioPacket() {
       if (rf95.waitAvailableTimeout(500)) {
         
         if (rf95.recv(rx_buf, &rx_len)) {
-          sent = processMessage((char *)rx_buf, mid);          
+          sent = processMessage((char *)rx_buf, mid);
         } else { // Nothing received
           Serial.println(F("No response"));
           continue;
