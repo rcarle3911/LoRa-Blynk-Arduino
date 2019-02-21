@@ -102,11 +102,11 @@ void loop()
   //Get status message
   if (rf95.waitAvailableTimeout(10)) {
     if (rf95.recv(rx_buf, &rx_len)) {
-      processMessage((char *)rx_buf, mid);
+      processMessage((char *)rx_buf, mid, true);
     }
   }
 
-  if (lastMessage + ONLINE_TIMEOUT < millis()) {
+  if (millis() - lastMessage > ONLINE_TIMEOUT) {
     if (unitOnline) {
       unitOnline = false;
       unitOnlineWLed.off();
@@ -120,7 +120,7 @@ void loop()
 }
 
 void blinkUnitOnline() {
-  if (lastBlink + BLINK_TIME < millis()) {    
+  if (millis() - lastBlink > BLINK_TIME) {
     lastBlink = millis();
     toggleWLed(&unitOnlineWLed, blinkUnitOnlineToggle);
     digitalWrite(UNIT_ONLINE_LED_PIN, blinkUnitOnlineToggle);
@@ -128,7 +128,7 @@ void blinkUnitOnline() {
   }
 }
 
-bool processMessage(char * data, uint8_t mid) {
+bool processMessage(char * data, uint8_t mid, bool alter) {
   
   bool rt = false;
   Serial.print(F("Received message: "));Serial.println(data);
@@ -145,19 +145,21 @@ bool processMessage(char * data, uint8_t mid) {
     Serial.println(F("Mids mismatch"));
   }
 
-  if ( (_sysStatus == 1) != systemEnabled) {
-    systemEnabled = !systemEnabled;
-    toggleWLed(&systemEnabledWLed, systemEnabled);
-    digitalWrite(SYSTEM_STATUS_LED_PIN, systemEnabled);
-    Blynk.virtualWrite(SYSTEM_ENABLED_BUTTON_VPIN, systemEnabled);
+  if (alter) {
+    if ( (_sysStatus == 1) != systemEnabled) {
+      systemEnabled = !systemEnabled;
+      toggleWLed(&systemEnabledWLed, systemEnabled);
+      digitalWrite(SYSTEM_STATUS_LED_PIN, systemEnabled);
+      Blynk.virtualWrite(SYSTEM_ENABLED_BUTTON_VPIN, systemEnabled);
+    }
+
+    if ( (_augStatus == 1) != augerStatus) {
+      augerStatus = !augerStatus;
+      toggleWLed(&augerStatusWLed, augerStatus);
+      digitalWrite(AUGER_STATUS_LED_PIN, augerStatus);
+    }
   }
 
-  if ( (_augStatus == 1) != augerStatus) {
-    augerStatus = !augerStatus;
-    toggleWLed(&augerStatusWLed, augerStatus);
-    digitalWrite(AUGER_STATUS_LED_PIN, augerStatus);
-  }
-  
   return rt;
 }
 
@@ -166,11 +168,16 @@ void sendRadioPacket() {
   digitalWrite(SEND_STATUS_LED, HIGH);  
   
   bool sent = false;
+
+  // Capture the systemEnabled variable 
+  // before it is altered by the response
+  bool requestedSysEn = systemEnabled;
+  
   uint8_t attempts = 0;
   while (!sent) {
 
     rx_buf[0] = ++mid;
-    rx_buf[1] = systemEnabled;
+    rx_buf[1] = requestedSysEn;
     
     if (attempts++ > 10) {      
       break;
@@ -180,7 +187,7 @@ void sendRadioPacket() {
       if (rf95.waitAvailableTimeout(500)) {
         
         if (rf95.recv(rx_buf, &rx_len)) {
-          sent = processMessage((char *)rx_buf, mid);
+          sent = processMessage((char *)rx_buf, mid, false);
         } else { // Nothing received
           Serial.println(F("No response"));
           continue;

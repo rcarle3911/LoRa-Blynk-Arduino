@@ -34,7 +34,7 @@ void setup()
   pinMode(AUGER_STATUS_PIN, INPUT_PULLUP);
   pinMode(SYSTEM_STATUS_PIN, INPUT_PULLUP);
   pinMode(SYSTEM_ENABLE_BUTTON_PIN, OUTPUT);
-  
+  digitalWrite(SYSTEM_ENABLE_BUTTON_PIN, systemEnabled);
   Serial.begin(115200);
   delay(100);
 
@@ -58,7 +58,6 @@ void loop()
     Serial.println(F("Nothing to process"));
   }
   
-  digitalWrite(SYSTEM_ENABLE_BUTTON_PIN, systemEnabled);
   systemStatus = !digitalRead(SYSTEM_STATUS_PIN);
   augerStatus = !digitalRead(AUGER_STATUS_PIN);
 
@@ -72,6 +71,7 @@ void processMessage(char * data) {
   lastMid = data[0];
   if (!augerStatus) { // Only allow change if auger is OFF
     systemEnabled = data[1];
+    digitalWrite(SYSTEM_ENABLE_BUTTON_PIN, systemEnabled);
   } else {
     Serial.println(F("Auger ON. Not accepting input"));
   }
