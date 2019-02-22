@@ -5,6 +5,21 @@
 #include <RH_RF95.h>
 #define TXPOWER 5 // TX power in dbm
 
+#ifdef ESP8266
+#define SYSTEM_ENABLE_BUTTON_PIN 4
+#define RFM95_CS 15
+#define RFM95_RST 16
+#define RFM95_INT 5
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+char ssid[] = "";
+char pass[] = "";
+#define SEND_STATUS_LED 3
+#define UNIT_ONLINE_LED_PIN 0
+#define SYSTEM_STATUS_LED_PIN 3
+#define AUGER_STATUS_LED_PIN 1
+
+#else
 #define SYSTEM_ENABLE_BUTTON_PIN 5
 #define RFM95_CS 4
 #define RFM95_RST 2
@@ -13,11 +28,11 @@
 #include <BlynkSimpleEthernet.h>
 #define W5100_CS  10
 #define SDCARD_CS 4
-
 #define SEND_STATUS_LED A0
 #define UNIT_ONLINE_LED_PIN 9
 #define SYSTEM_STATUS_LED_PIN 6
 #define AUGER_STATUS_LED_PIN 8
+#endif
 
 #define BUTTON_PRESS_TIME 2000
 #define BLINK_TIME 1000
@@ -29,13 +44,14 @@
 #define SYSTEM_STATUS_LED_VPIN V2
 #define AUGER_STATUS_LED_VPIN V3
 
-char auth[] = "YOUR_BLYNK_AUTH_KEY_HERE"; // REPLACE WITH YOUR AUTH KEY FROM BLYNK
+char auth[] = "AUTH_KEY"; // REPLACE WITH YOUR AUTH KEY FROM BLYNK
 
 // Change to 434.0 or other frequency, must match RX's freq!
 #define RF95_FREQ 915.0
 
 // Singleton instance of the radio driver
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
+#define MAX_MESSAGE_LENGTH 3
 
 WidgetLED unitOnlineWLed(UNIT_ONLINE_LED_VPIN);
 WidgetLED systemEnabledWLed(SYSTEM_STATUS_LED_VPIN);
@@ -52,9 +68,6 @@ unsigned long sysEnableButtonPressStart = 0;
 unsigned long lastMessage = 0;
 unsigned long lastBlink = 0;
 
-uint8_t rx_buf[3];
-uint8_t rx_len = sizeof(rx_buf);
-
 BLYNK_CONNECTED() {
   Blynk.syncVirtual(SYSTEM_ENABLED_BUTTON_VPIN);
 }
@@ -64,12 +77,14 @@ void sendRadioPacket();
 BLYNK_WRITE(SYSTEM_ENABLED_BUTTON_VPIN) {
   int buttonState = param.asInt();
   systemEnabled = buttonState == 1 ? true : false;
+  toggleWLed(&systemEnabledWLed, systemEnabled);
+  digitalWrite(SYSTEM_STATUS_LED_PIN, systemEnabled);   
   sendRadioPacket();
 }
 
 void setup() 
 {
-  pinMode(SEND_STATUS_LED, OUTPUT);     
+  //pinMode(SEND_STATUS_LED, OUTPUT);     
   pinMode(SYSTEM_ENABLE_BUTTON_PIN, INPUT_PULLUP);
   pinMode(UNIT_ONLINE_LED_PIN, OUTPUT);
   pinMode(SYSTEM_STATUS_LED_PIN, OUTPUT);
@@ -80,7 +95,6 @@ void setup()
   
   radio_init();
   blynk_init();
-  sendRadioPacket();
 }
 
 void loop()
@@ -90,7 +104,7 @@ void loop()
     Serial.println(F("Button pushed... starting timer"));
     sysEnableButtonPressStart = millis();
   } else if (sysEnableButtonState == LOW) {
-    if (sysEnableButtonPressStart + BUTTON_PRESS_TIME < millis()) {
+    if (millis() - sysEnableButtonPressStart > BUTTON_PRESS_TIME) {
       sysEnableButtonPressStart = millis();
       Serial.println(F("Button timer met... sending packet"));
       systemEnabled = !systemEnabled;
@@ -101,9 +115,7 @@ void loop()
   
   //Get status message
   if (rf95.waitAvailableTimeout(10)) {
-    if (rf95.recv(rx_buf, &rx_len)) {
-      processMessage((char *)rx_buf, mid, true);
-    }
+    processMessage(mid, true);
   }
 
   if (millis() - lastMessage > ONLINE_TIMEOUT) {
@@ -128,11 +140,20 @@ void blinkUnitOnline() {
   }
 }
 
-bool processMessage(char * data, uint8_t mid, bool alter) {
+bool processMessage(uint8_t mid, bool alter) {
+  uint8_t data[MAX_MESSAGE_LENGTH];
+  uint8_t data_len = sizeof(data);
+
+  if (!rf95.recv(data, &data_len)) {
+    return false;
+  }
   
   bool rt = false;
-  Serial.print(F("Received message: "));Serial.println(data);
-
+  Serial.println(F("Received message with"));
+  Serial.print(F("MID: "));Serial.println(data[0], DEC);
+  Serial.print(F("SysEn: "));Serial.println(data[1], DEC);
+  Serial.print(F("AugStatus: "));Serial.println(data[2], DEC);
+  
   uint8_t _mid = data[0];
   uint8_t _sysStatus = data[1];
   uint8_t _augStatus = data[2];
@@ -145,20 +166,21 @@ bool processMessage(char * data, uint8_t mid, bool alter) {
     Serial.println(F("Mids mismatch"));
   }
 
-  if (alter) {
-    if ( (_sysStatus == 1) != systemEnabled) {
+  if ( (_sysStatus == 1) != systemEnabled) {
+    if (alter) {
       systemEnabled = !systemEnabled;
-      toggleWLed(&systemEnabledWLed, systemEnabled);
-      digitalWrite(SYSTEM_STATUS_LED_PIN, systemEnabled);
       Blynk.virtualWrite(SYSTEM_ENABLED_BUTTON_VPIN, systemEnabled);
     }
-
-    if ( (_augStatus == 1) != augerStatus) {
-      augerStatus = !augerStatus;
-      toggleWLed(&augerStatusWLed, augerStatus);
-      digitalWrite(AUGER_STATUS_LED_PIN, augerStatus);
-    }
+    toggleWLed(&systemEnabledWLed, systemEnabled);
+    digitalWrite(SYSTEM_STATUS_LED_PIN, systemEnabled);    
   }
+
+  if ( (_augStatus == 1) != augerStatus) {
+    augerStatus = !augerStatus;
+    toggleWLed(&augerStatusWLed, augerStatus);
+    digitalWrite(AUGER_STATUS_LED_PIN, augerStatus);
+  }
+  
 
   return rt;
 }
@@ -169,36 +191,36 @@ void sendRadioPacket() {
   
   bool sent = false;
 
-  // Capture the systemEnabled variable 
-  // before it is altered by the response
-  bool requestedSysEn = systemEnabled;
+  uint8_t rx_buf[MAX_MESSAGE_LENGTH];
+  uint8_t rx_len = sizeof(rx_buf);
+
+  uint8_t tx_buf[MAX_MESSAGE_LENGTH];
+  uint8_t tx_len = sizeof(tx_buf);
   
   uint8_t attempts = 0;
   while (!sent) {
 
-    rx_buf[0] = ++mid;
-    rx_buf[1] = requestedSysEn;
+    tx_buf[0] = ++mid;
+    tx_buf[1] = systemEnabled;
     
-    if (attempts++ > 10) {      
+    Serial.print(F("Attempt: "));Serial.println(attempts);  
+    if (attempts++ > 10) {  
       break;
     }
-    rf95.send((uint8_t *)rx_buf, sizeof(rx_buf));
+    
+    rf95.send(tx_buf, tx_len);
+    
+    Serial.print(F("Sending: "));Serial.print(tx_buf[0], DEC);Serial.print(", ");Serial.println(tx_buf[1], DEC);
     if (rf95.waitPacketSent(500)) {
-      if (rf95.waitAvailableTimeout(500)) {
-        
-        if (rf95.recv(rx_buf, &rx_len)) {
-          sent = processMessage((char *)rx_buf, mid, false);
-        } else { // Nothing received
-          Serial.println(F("No response"));
-          continue;
-        }
+      if (rf95.waitAvailableTimeout(500)) {       
+        sent = processMessage(mid, false);
       } else { // No message
         Serial.println(F("No message"));
         continue;
       }
     } else { // Packet failed to send
       Serial.println(F("Failed to send"));
-      continue;
+      break;
     }
   }
 
@@ -244,15 +266,18 @@ void radio_init() {
 }
 
 void blynk_init() {
-
+#ifdef ESP8266
+  Blynk.begin(auth, ssid, pass);
+#else
   pinMode(SDCARD_CS, OUTPUT);
   digitalWrite(SDCARD_CS, HIGH); // Deselect the SD card
   Blynk.begin(auth);  
-
+#endif
   // Turn off virtual LEDs
   unitOnlineWLed.off();
   systemEnabledWLed.off();
   augerStatusWLed.off();
+  Serial.println(F("Blynk initialized"));
 }
 
 // Returns true if button was pressed. False otherwise.

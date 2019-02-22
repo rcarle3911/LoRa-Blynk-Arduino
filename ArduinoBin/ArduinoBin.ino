@@ -15,8 +15,9 @@
 
 // Singleton instance of the radio driver
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
+#define MAX_MESSAGE_LENGTH 3
 
-uint8_t buf[3];
+uint8_t buf[MAX_MESSAGE_LENGTH];
 uint8_t len = sizeof(buf);
 
 // Button/LED pins
@@ -58,15 +59,17 @@ void loop()
     Serial.println(F("Nothing to process"));
   }
   
-  systemStatus = !digitalRead(SYSTEM_STATUS_PIN);
-  augerStatus = !digitalRead(AUGER_STATUS_PIN);
+  systemStatus = digitalRead(SYSTEM_STATUS_PIN);
+  augerStatus = digitalRead(AUGER_STATUS_PIN);
 
   sendRadioPacket();
 }
 
 void processMessage(char * data) {
 
-  Serial.print(F("Received message: "));Serial.println(data);
+  Serial.println(F("Received message with"));
+  Serial.print(F("MID: "));Serial.println(data[0], DEC);
+  Serial.print(F("SysEn: "));Serial.println(data[1], DEC);
 
   lastMid = data[0];
   if (!augerStatus) { // Only allow change if auger is OFF
